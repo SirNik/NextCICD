@@ -1,26 +1,26 @@
-name: Deploy to GitHub Pages
+name: CI/CD
 
 on:
-  # Deploy on every push to main...
   push:
     branches: [main]
-  # ...and allow manual runs from the Actions tab
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
-# Permissions needed for the GitHub Pages deployment
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, don't cancel in-progress runs
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ci-cd-${{ github.ref }}
+  # Superseded PR runs are pointless, so cancel them. A deploy on main must
+  # never be interrupted half-way, so those queue up instead.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
-    name: Build static site
+  verify:
+    name: Lint, typecheck, test & build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,8 +35,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Built once, with the base path Pages needs, and reused by deploy below.
       - name: Build (static export)
-        # Serve from /<repo-name>/ on github.io
         env:
           PAGES_BASE_PATH: /${{ github.event.repository.name }}
         run: npm run build
@@ -50,9 +59,13 @@ jobs:
           path: out
 
   deploy:
-    name: Deploy
-    needs: build
+    name: Deploy to GitHub Pages
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
